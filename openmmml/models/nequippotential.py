@@ -202,11 +202,76 @@ class NequIPPotentialImpl(MLPotentialImpl):
                 input_dict["edge_index"] = mapping
                 input_dict["edge_cell_shift"] = shifts_idx
 
-                out = self.model(input_dict)    
-
+                out = self.model(input_dict)  
+                
+                
                 # return energy and forces
                 energy = out["total_energy"]*self.energy_to_kJ
+                
+                # BUGBUGBUGBUGBUGBUGBUGBUGBUGBUG
+                # numerical gradients
+                #print(isinstance(energy,torch.Tensor))
+                #print(energy[0][0])
+
+                h = 0.05
+                natoms = positions.size(dim=0)
+                forces_new = torch.empty((natoms,3), dtype=torch.float)
+                for i in range(natoms):
+                    for j in range(3):
+
+                        coords_plus = positions.clone()
+                        coords_plus[i][j] += h
+
+                        input_dict["pos"] = coords_plus
+
+                        # compute edges
+                        mapping, _ , shifts_idx = compute_neighborlist(cutoff=self.r_max,
+                                                                       pos=input_dict["pos"],
+                                                                       cell=input_dict["cell"],
+                                                                       pbc=input_dict["pbc"],
+                                                                       batch=batch,
+                                                                       self_interaction=self_interaction)
+
+                        edge_index = torch.stack((mapping[0], mapping[1]))
+
+                        input_dict["edge_index"] = edge_index
+                        input_dict["edge_cell_shift"] = shifts_idx
+
+                        out2 = self.model(input_dict)
+                        energy_plus = out2["total_energy"]*self.energy_to_kJ
+                        #print(energy_plus)
+
+
+
+
+                        coords_minus = positions.clone()
+                        coords_minus[i][j] -= h
+
+                        input_dict["pos"] = coords_minus
+
+                        # compute edges
+                        mapping, _ , shifts_idx = compute_neighborlist(cutoff=self.r_max,
+                                                                       pos=input_dict["pos"],
+                                                                       cell=input_dict["cell"],
+                                                                       pbc=input_dict["pbc"],
+                                                                       batch=batch,
+                                                                       self_interaction=self_interaction)
+
+                        edge_index = torch.stack((mapping[0], mapping[1]))
+
+                        input_dict["edge_index"] = edge_index
+                        input_dict["edge_cell_shift"] = shifts_idx
+
+                        out3 = self.model(input_dict)
+                        energy_minus = out3["total_energy"]*self.energy_to_kJ
+                        #print(energy_minus)
+
+                        forces_new[i][j] = -1 * (energy_plus[0][0] - energy_minus[0][0]) / (2 * h)/ self.distance_to_nm
+
                 forces = out["forces"]*self.energy_to_kJ/self.distance_to_nm
+                #print("forces",forces.dtype,forces)
+                #print("forces_new",forces_new.dtype,forces_new)
+                # BUGBUGBUGBUGBUGBUGBUGBUGBUGBUG
 
                 return (energy, forces)
             
